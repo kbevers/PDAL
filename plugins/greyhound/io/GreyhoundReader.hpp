@@ -39,6 +39,8 @@
 #include <pdal/util/Bounds.hpp>
 #include <arbiter.hpp>
 
+#include "dir.hpp"
+#include "bbox.hpp"
 
 namespace pdal
 {
@@ -60,11 +62,16 @@ private:
     std::string m_sessionId;
     point_count_t m_numPoints;
     point_count_t m_index;
-    BOX3D m_bounds;
+    BOX3D m_queryBounds;
+    BOX3D m_conformingBounds;
+//     BOX3D m_bounds;
     uint32_t m_depthBegin;
     uint32_t m_depthEnd;
     uint32_t m_baseDepth;
+    uint32_t m_stopSplittingDepth;
     Json::Value m_resourceInfo;
+    uint32_t m_timeout;
+    point_count_t m_splitCountThreshold;
 
     virtual void initialize(PointTableRef table);
     virtual void addArgs(ProgramArgs& args);
@@ -75,12 +82,22 @@ private:
     virtual QuickInfo inspect();
     virtual void done(PointTableRef table);
 
-    Json::Value getResourceInfo();
+    Json::Value fetch(const std::string& url) const;
     DimTypeList getSchema(const Json::Value& jsondata) const;
-    BOX3D getBounds(const Json::Value& jsondata) const;
+    BOX3D getBounds(const Json::Value& jsondata, const std::string& memberName) const;
+    point_count_t readLevel(PointViewPtr view, point_count_t count, BOX3D bounds, uint32_t readBegin, uint32_t readEnd);
+//     BOX3D zoom(BOX3D bounds, BOX3D fullBox, int& split) const;
 
     point_count_t estimatePointCount() const;
 
+    point_count_t readDirection(const greyhound::BBox& currentBox,
+                                            const greyhound::BBox& queryBox,
+                                            greyhound::Dir direction,
+                                            uint32_t& depthBegin,
+                                            uint32_t& depthEnd,
+                                            point_count_t count,
+                                            PointViewPtr view,
+                                            bool doSplit);
     DimTypeList m_dimData;
 };
 

@@ -60,6 +60,9 @@ GreyhoundReader::GreyhoundReader()
     , m_depthBegin(0)
     , m_depthEnd(std::numeric_limits<uint32_t>::max())
     , m_baseDepth(0)
+    , m_stopSplittingDepth(0)
+    , m_timeout(0)
+    , m_splitCountThreshold(0)
 { }
 
 GreyhoundReader::~GreyhoundReader()
@@ -98,13 +101,13 @@ DimTypeList GreyhoundReader::getSchema(const Json::Value& jsondata) const
 
     return output;
 }
-BOX3D GreyhoundReader::getBounds(const Json::Value& jsondata) const
+BOX3D GreyhoundReader::getBounds(const Json::Value& jsondata, const std::string& memberName) const
 {
     BOX3D output;
-    if (jsondata.isMember("boundsConforming") &&
-        jsondata["boundsConforming"].isArray())
+    if (jsondata.isMember(memberName) &&
+        jsondata[memberName].isArray())
     {
-        Json::Value bounds(jsondata["boundsConforming"]);
+        Json::Value bounds(jsondata[memberName]);
 
         output.minx = bounds[0].asDouble();
         output.miny = bounds[1].asDouble();
@@ -115,19 +118,20 @@ BOX3D GreyhoundReader::getBounds(const Json::Value& jsondata) const
     }
     else
     {
-        throw pdal_error("Greyhound info response has no \"bounds\" member");
+        throw pdal_error("Greyhound info response has no \"" + memberName + "\" member");
     }
 
     return output;
 }
 
-Json::Value GreyhoundReader::getResourceInfo()
+Json::Value GreyhoundReader::fetch(const std::string& url) const
 {
-    std::string info_url = m_url + "/resource/" + m_resource + "/info";
-//     log()->get(LogLevel::Info) << "fetching info URL " << info_url;
-
-    arbiter::Arbiter a;
-    auto response = a.get(info_url);
+    Json::Value config;
+    if (log()->getLevel() > LogLevel::Warning)
+        config["arbiter"]["verbose"] = true;
+    config["http"]["timeout"] = m_timeout;
+    arbiter::Arbiter a(config);
+    auto response = a.get(url);
 
     Json::Value jsonResponse;
     Json::Reader jsonReader;
@@ -140,10 +144,14 @@ Json::Value GreyhoundReader::getResourceInfo()
 
 void GreyhoundReader::initialize(PointTableRef table)
 {
-    m_resourceInfo = getResourceInfo();
+    std::string info_url = m_url + "/resource/" + m_resource + "/info";
+    log()->get(LogLevel::Info) << "fetching info URL " << info_url << std::endl;
+
+    m_resourceInfo = fetch(info_url);
 
     m_dimData = getSchema(m_resourceInfo);
-    m_bounds = getBounds(m_resourceInfo);
+    m_conformingBounds= getBounds(m_resourceInfo, "boundsConforming");
+    m_stopSplittingDepth = std::log(m_resourceInfo["numPoints"].asInt64()) / std::log(4);
 
     std::string srs = m_resourceInfo["srs"].asString();
     setSpatialReference(SpatialReference(srs));
@@ -169,7 +177,7 @@ QuickInfo GreyhoundReader::inspect()
     qi.m_srs = getSpatialReference();
     qi.m_valid = true;
     qi.m_pointCount = estimatePointCount();
-    qi.m_bounds = m_bounds;
+    qi.m_bounds = getBounds(m_resourceInfo, "boundsConforming");
 
     done(table);
 
@@ -180,9 +188,11 @@ void GreyhoundReader::addArgs(ProgramArgs& args)
 {
     args.add("url", "URL", m_url);
     args.add("resource", "Resource ID", m_resource);
-    args.add("bounds", "Bounding cube", m_bounds);
+    args.add("timeout", "Request timeout (milliseconds)", m_timeout, 600u);
+    args.add("bounds", "Bounding cube", m_queryBounds);
     args.add("depth_begin", "Beginning depth to query", m_depthBegin);
     args.add("depth_end", "Ending depth to query", m_depthEnd);
+    args.add("split_threshold", "Point count for which to start splitting queries", m_splitCountThreshold, 500000llu);
 }
 
 
@@ -196,7 +206,6 @@ void GreyhoundReader::addDimensions(PointLayoutPtr layout)
 
 uint64_t sumHierarchy(Json::Value tree)
 {
-
     uint64_t output(0);
     if (!tree.isMember("n")) return output;
 
@@ -221,52 +230,71 @@ uint64_t sumHierarchy(Json::Value tree)
     return output;
 }
 
-point_count_t GreyhoundReader::estimatePointCount()  const
+
+
+pdal::greyhound::BBox makeBox(BOX3D bounds)
 {
-    // Estimate the number of points
     pdal::greyhound::Point minimum;
     pdal::greyhound::Point maximum;
 
-    minimum.x = m_bounds.minx;
-    minimum.y = m_bounds.miny;
-    minimum.z = m_bounds.minz;
+    minimum.x = bounds.minx;
+    minimum.y = bounds.miny;
+    minimum.z = bounds.minz;
 
-    maximum.x = m_bounds.maxx;
-    maximum.y = m_bounds.maxy;
-    maximum.z = m_bounds.maxz;
+    maximum.x = bounds.maxx;
+    maximum.y = bounds.maxy;
+    maximum.z = bounds.maxz;
+    pdal::greyhound::BBox box(minimum, maximum, true);
+    return box;
 
-    pdal::greyhound::BBox queryBounds(minimum, maximum, true);
-    pdal::greyhound::BBox currentBounds(m_resourceInfo["bounds"]);
+}
 
-    int split(0);
-    while (currentBounds.contains(queryBounds))
+BOX3D zoom(BOX3D query, BOX3D fullBox, int& split)
+{
+
+    pdal::greyhound::BBox queryBox = makeBox(query);
+    pdal::greyhound::BBox currentBox = makeBox(fullBox);
+
+    while (currentBox.contains(queryBox))
     {
-        currentBounds.go(pdal::greyhound::getDirection(currentBounds.mid(),queryBounds.mid()));
+        currentBox.go(pdal::greyhound::getDirection(queryBox.mid(), currentBox.mid()));
         split++;
     }
 
-    log()->get(LogLevel::Info) << "split count: " << split << std::endl;
+    BOX3D output;
+    output.minx = currentBox.min().x; output.maxx = currentBox.max().x;
+    output.miny = currentBox.min().y; output.maxy = currentBox.max().y;
+    output.minz = currentBox.min().z; output.maxz = currentBox.max().z;
 
-    std::stringstream bounds;
-    bounds << "[" << currentBounds.min().x << "," << currentBounds.min().y << "," << currentBounds.min().z;
-    bounds << "," << currentBounds.max().x << "," << currentBounds.max().y << "," << currentBounds.max().z << "]";
+    return output;
+}
+
+std::string stringifyBounds(BOX3D bounds)
+{
+    std::stringstream sbounds;
+    sbounds << std::fixed;
+    sbounds << "[" << bounds.minx << "," << bounds.miny << "," << bounds.minz;
+    sbounds << "," << bounds.maxx << "," << bounds.maxy << "," << bounds.maxz << "]";
+    return sbounds.str();
+}
+
+point_count_t GreyhoundReader::estimatePointCount()  const
+{
+    int split(0);
+
+    BOX3D fullBounds = getBounds(m_resourceInfo, "bounds");
+    BOX3D currentBounds = zoom(m_queryBounds, fullBounds, split);
 
     std::stringstream url;
     url << m_url << "/resource/" << m_resource;
-    url << "/hierarchy?bounds=" << arbiter::http::sanitize(bounds.str());
+    url << "/hierarchy?bounds=" << arbiter::http::sanitize(stringifyBounds(currentBounds));
     url << "&depthBegin=" << m_baseDepth + split;
     url << "&depthEnd=" << m_baseDepth + split + 6;
 
     log()->get(LogLevel::Info) << "fetching hierarchy URL " << url.str() << std::endl;
 
-    arbiter::Arbiter a;
-    auto response = a.get(url.str());
-
-    Json::Value jsonResponse;
-    Json::Reader jsonReader;
-    jsonReader.parse(response, jsonResponse);
-    uint64_t count = sumHierarchy(jsonResponse);
-    log()->get(LogLevel::Info) << "estimated count " << count << std::endl;;
+    Json::Value response = fetch(url.str());
+    uint64_t count = sumHierarchy(response);
     return count;
 }
 
@@ -276,20 +304,133 @@ void GreyhoundReader::ready(PointTableRef)
 
 }
 
+point_count_t GreyhoundReader::readDirection(const greyhound::BBox& currentBox,
+                                            const greyhound::BBox& queryBox,
+                                            greyhound::Dir direction,
+                                            uint32_t& depthBegin,
+                                            uint32_t& depthEnd,
+                                            point_count_t count,
+                                            PointViewPtr view,
+                                            bool doSplit)
+{
+
+    using namespace pdal::greyhound;
+    point_count_t output(0);
+
+    BBox dirBox = currentBox.get(direction);
+
+    BOX3D dirBounds;
+    dirBounds.minx = dirBox.min().x; dirBounds.maxx = dirBox.max().x;
+    dirBounds.miny = dirBox.min().y; dirBounds.maxy = dirBox.max().y;
+    dirBounds.minz = dirBox.min().z; dirBounds.maxz = dirBox.max().z;
+
+    if (dirBox.overlaps(queryBox))
+    {
+        output += this->readLevel(view, count, dirBounds, depthBegin, depthEnd);
+//         if (doSplit)
+//         {
+//             bool splitNow(false);
+//             if (output > m_splitCountThreshold)
+//                 splitNow = true;
+//             output += readDirection(dirBox, queryBox, Dir::swd, depthBegin, depthEnd, count, view, splitNow);
+//             output += readDirection(dirBox, queryBox, Dir::sed, depthBegin, depthEnd, count, view, splitNow);
+//             output += readDirection(dirBox, queryBox, Dir::nwd, depthBegin, depthEnd, count, view, splitNow);
+//             output += readDirection(dirBox, queryBox, Dir::ned, depthBegin, depthEnd, count, view, splitNow);
+//             output += readDirection(dirBox, queryBox, Dir::swu, depthBegin, depthEnd, count, view, splitNow);
+//             output += readDirection(dirBox, queryBox, Dir::seu, depthBegin, depthEnd, count, view, splitNow);
+//             output += readDirection(dirBox, queryBox, Dir::nwu, depthBegin, depthEnd, count, view, splitNow);
+//             output += readDirection(dirBox, queryBox, Dir::neu, depthBegin, depthEnd, count, view, splitNow);
+//         }
+    }
+    return output;
+
+};
+
+
+
 point_count_t GreyhoundReader::read(
         PointViewPtr view,
         const point_count_t count)
 {
+    using namespace pdal::greyhound;
 
-    std::stringstream bounds;
-    bounds << "[" << m_bounds.minx << "," << m_bounds.minx << "," << m_bounds.minz;
-    bounds << "," << m_bounds.maxx << "," << m_bounds.maxy << "," << m_bounds.maxz << "]";
+    uint32_t depthBegin = std::max(m_depthBegin, m_baseDepth);
+    uint32_t depthEnd = depthBegin + 1;
 
+    int split(0);
+
+    BOX3D fullBounds = getBounds(m_resourceInfo, "bounds");
+    BOX3D currentBounds = zoom(m_queryBounds, fullBounds, split);
+
+    BBox queryBox = makeBox(m_queryBounds);
+
+    point_count_t output(0);
+
+    log()->get(LogLevel::Info) << "starting  depthBegin: " << depthBegin << " depthEnd: " << depthEnd << std::endl;
+    log()->get(LogLevel::Info) << "starting  m_depthBegin: " << m_depthBegin << " m_depthEnd: " << m_depthEnd << std::endl;
+
+
+    point_count_t numReadLastLevel(0);
+    bool doSplit(false);
+
+    while (depthBegin < m_stopSplittingDepth && depthEnd <= m_depthEnd)
+    {
+
+        BBox currentBox = makeBox(currentBounds);
+        BBox queryBox = makeBox(this->m_queryBounds);
+
+        bool doSplit(false);
+        if (numReadLastLevel > m_splitCountThreshold)
+        {
+            doSplit = true;
+            log()->get(LogLevel::Info) << "doSplit is true!" << std::endl;
+
+        }
+
+        log()->get(LogLevel::Info) << "doSplit: " << doSplit << " numReadLastLevel: " << numReadLastLevel << " m_splitCountThreshold: " << m_splitCountThreshold << std::endl;
+        output += readDirection(currentBox, queryBox, Dir::swd, depthBegin, depthEnd, count, view, doSplit);
+        output += readDirection(currentBox, queryBox, Dir::sed, depthBegin, depthEnd, count, view, doSplit);
+        output += readDirection(currentBox, queryBox, Dir::nwd, depthBegin, depthEnd, count, view, doSplit);
+        output += readDirection(currentBox, queryBox, Dir::ned, depthBegin, depthEnd, count, view, doSplit);
+        output += readDirection(currentBox, queryBox, Dir::swu, depthBegin, depthEnd, count, view, doSplit);
+        output += readDirection(currentBox, queryBox, Dir::seu, depthBegin, depthEnd, count, view, doSplit);
+        output += readDirection(currentBox, queryBox, Dir::nwu, depthBegin, depthEnd, count, view, doSplit);
+        output += readDirection(currentBox, queryBox, Dir::neu, depthBegin, depthEnd, count, view, doSplit);
+
+        numReadLastLevel = output - numReadLastLevel;
+
+        depthBegin++;
+        depthEnd = depthBegin + 1;
+    }
+
+    // read final depth
+
+    if (depthEnd > m_stopSplittingDepth)
+    {
+        output += readLevel(view, count, currentBounds, m_stopSplittingDepth, m_depthEnd);
+        log()->get(LogLevel::Info) << "stop splitting: " << m_stopSplittingDepth << " depthEnd: " << depthEnd << std::endl;
+
+    }
+    return output;
+
+}
+
+point_count_t GreyhoundReader::readLevel(
+        PointViewPtr view,
+        const point_count_t count,
+        BOX3D bounds,
+        uint32_t depthBegin,
+        uint32_t depthEnd)
+{
+
+
+    std::string bounds_str = stringifyBounds(bounds);
+    log()->get(LogLevel::Info) << "bounds string: " << bounds_str << std::endl;
     std::stringstream url;
     url << m_url << "/resource/" << m_resource;
-    url << "/read?bounds=" << arbiter::http::sanitize(bounds.str());
-    url << "&depthBegin=" << std::max(m_depthBegin, m_baseDepth);
-    url << "&depthEnd=" << m_depthEnd;
+    url << "/read?bounds=" << arbiter::http::sanitize(stringifyBounds(bounds));
+    url << "&depthBegin=" << depthBegin;
+    url << "&depthEnd=" << depthEnd;
 
 #ifdef PDAL_HAVE_LAZPERF
     url << "&compress=true";
@@ -297,7 +438,11 @@ point_count_t GreyhoundReader::read(
 
     log()->get(LogLevel::Info) << "fetching read URL " << url.str() << std::endl;
 
-    arbiter::Arbiter a;
+    Json::Value config;
+//     if (log()->getLevel() > LogLevel::Warning)
+//         config["arbiter"]["verbose"] = true;
+    config["http"]["timeout"] = m_timeout;
+    arbiter::Arbiter a(config);
     auto response = a.getBinary(url.str());
 
     PointId nextId = view->size();

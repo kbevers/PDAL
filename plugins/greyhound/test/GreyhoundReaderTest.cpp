@@ -45,19 +45,22 @@ using namespace pdal;
 
 namespace { // anonymous
 
+std::string ROOT_URL("http://test.greyhound.io");
+
 Options getGreyhoundOptions()
 {
     Options options;
 
-    options.add(Option("url", "http://data.greyhound.io"));
+    options.add(Option("url", ROOT_URL));
 
     // Grab just the stadium area
-    options.add(Option("bounds", "([638404.602228,852818.850234],[638895.469331,853379.155279], [0,1000])"));
+    options.add(Option("bounds", "([638404.60,638895.46],[852818.85,853379.15], [-1,1000])"));
     options.add(Option("resource", "autzen-h"));
     options.add(Option("depth_begin", 1));
-    options.add(Option("depth_end", 7));
-//     options.add(Option("debug", true));
-//     options.add(Option("verbose", 9));
+    options.add(Option("depth_end", 9));
+    options.add(Option("timeout", 50000));
+    options.add(Option("debug", true));
+    options.add(Option("verbose", 1));
 
     return options;
 }
@@ -74,11 +77,10 @@ protected:
         arbiter::Arbiter a;
         try
         {
-            a.get("http://data.greyhound.io/resource/nyc-h/info");
+            a.get(ROOT_URL+"/resource/nyc-h/info");
             m_bSkipTests = false;
         } catch (arbiter::ArbiterError&)
         {
-            std::cout << "skipping GreyhoundReader tests" << std::endl;
             m_bSkipTests = true;
         }
     }
@@ -109,10 +111,10 @@ TEST_F(GreyhoundReaderTest, read)
     reader.prepare(table);
     PointViewSet viewSet = reader.execute(table);
     PointViewPtr view = *viewSet.begin();
-    EXPECT_EQ(view->size(), 5490u);
+    EXPECT_EQ(view->size(), 13874u);
 
     int position (10);
-    EXPECT_DOUBLE_EQ(view->getFieldAs<double>(pdal::Dimension::Id::X, position), 635648.35000000009);
+    EXPECT_DOUBLE_EQ(view->getFieldAs<double>(pdal::Dimension::Id::X, position), 637472.70000000007);
 
 }
 
@@ -127,7 +129,7 @@ TEST_F(GreyhoundReaderTest, quick)
 
     reader.setOptions(getGreyhoundOptions());
     pdal::QuickInfo qi = reader.preview();
-    EXPECT_EQ(qi.m_pointCount, 3239057u);
+    EXPECT_EQ(qi.m_pointCount, 2969019u);
 
     BOX3D bounds = qi.m_bounds;
     EXPECT_DOUBLE_EQ(bounds.minx, 635577.79000000004);
