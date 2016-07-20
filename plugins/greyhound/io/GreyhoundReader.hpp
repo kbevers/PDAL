@@ -88,7 +88,7 @@ private:
     point_count_t readLevel(PointViewPtr view, point_count_t count, BOX3D bounds, uint32_t readBegin, uint32_t readEnd);
 //     BOX3D zoom(BOX3D bounds, BOX3D fullBox, int& split) const;
 
-    point_count_t estimatePointCount() const;
+    Json::Value fetchHierarchy(BOX3D bounds, uint32_t depthBegin, uint32_t depthEnd)  const;
 
     point_count_t readDirection(const greyhound::BBox& currentBox,
                                             const greyhound::BBox& queryBox,
