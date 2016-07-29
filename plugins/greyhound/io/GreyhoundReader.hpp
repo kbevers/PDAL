@@ -92,12 +92,11 @@ private:
 
     point_count_t readDirection(const greyhound::BBox& currentBox,
                                             const greyhound::BBox& queryBox,
-                                            greyhound::Dir direction,
                                             uint32_t& depthBegin,
                                             uint32_t& depthEnd,
                                             point_count_t count,
                                             PointViewPtr view,
-                                            bool doSplit);
+                                            Json::Value hierarchy);
     DimTypeList m_dimData;
 };
 

@@ -312,41 +312,56 @@ void GreyhoundReader::ready(PointTableRef)
 
 }
 
+
 point_count_t GreyhoundReader::readDirection(const greyhound::BBox& currentBox,
                                             const greyhound::BBox& queryBox,
-                                            greyhound::Dir direction,
                                             uint32_t& depthBegin,
                                             uint32_t& depthEnd,
                                             point_count_t count,
                                             PointViewPtr view,
-                                            bool doSplit)
+                                            Json::Value hierarchy)
 {
 
-    using namespace pdal::greyhound;
     point_count_t output(0);
+    if (!currentBox.overlaps(queryBox))
+        return output;
 
-    BBox dirBox = currentBox.get(direction);
+    using namespace pdal::greyhound;
 
-    BOX3D dirBounds;
-    dirBounds.minx = dirBox.min().x; dirBounds.maxx = dirBox.max().x;
-    dirBounds.miny = dirBox.min().y; dirBounds.maxy = dirBox.max().y;
-    dirBounds.minz = dirBox.min().z; dirBounds.maxz = dirBox.max().z;
-
-    if (dirBox.overlaps(queryBox))
+    auto makeDirBox = [](greyhound::BBox box, greyhound::Dir direction)
     {
-        output += this->readLevel(view, count, dirBounds, depthBegin, depthEnd);
-//         if (doSplit)
-//         {
-//             output += readDirection(dirBox, queryBox, Dir::swd, depthBegin, depthEnd, count, view, doSplit);
-//             output += readDirection(dirBox, queryBox, Dir::sed, depthBegin, depthEnd, count, view, doSplit);
-//             output += readDirection(dirBox, queryBox, Dir::nwd, depthBegin, depthEnd, count, view, doSplit);
-//             output += readDirection(dirBox, queryBox, Dir::ned, depthBegin, depthEnd, count, view, doSplit);
-//             output += readDirection(dirBox, queryBox, Dir::swu, depthBegin, depthEnd, count, view, doSplit);
-//             output += readDirection(dirBox, queryBox, Dir::seu, depthBegin, depthEnd, count, view, doSplit);
-//             output += readDirection(dirBox, queryBox, Dir::nwu, depthBegin, depthEnd, count, view, doSplit);
-//             output += readDirection(dirBox, queryBox, Dir::neu, depthBegin, depthEnd, count, view, doSplit);
-//         }
+        BBox dirBox = box.get(direction);
+        return dirBox;
+    };
+
+    point_count_t belowUs = sumHierarchy(hierarchy);
+
+
+    if (currentBox.overlaps(queryBox))
+    {
+        if (belowUs  > m_splitCountThreshold)
+        {
+            log()->get(LogLevel::Info) << "belowUs: " << belowUs << " m_splitCountThreshold: " << m_splitCountThreshold << std::endl;
+            output += readDirection(makeDirBox(currentBox, Dir::swd), queryBox, depthBegin, depthEnd, count, view, hierarchy);
+            output += readDirection(makeDirBox(currentBox, Dir::sed), queryBox, depthBegin, depthEnd, count, view, hierarchy);
+            output += readDirection(makeDirBox(currentBox, Dir::nwd), queryBox, depthBegin, depthEnd, count, view, hierarchy);
+            output += readDirection(makeDirBox(currentBox, Dir::ned), queryBox, depthBegin, depthEnd, count, view, hierarchy);
+            output += readDirection(makeDirBox(currentBox, Dir::swu), queryBox, depthBegin, depthEnd, count, view, hierarchy);
+            output += readDirection(makeDirBox(currentBox, Dir::seu), queryBox, depthBegin, depthEnd, count, view, hierarchy);
+            output += readDirection(makeDirBox(currentBox, Dir::nwu), queryBox, depthBegin, depthEnd, count, view, hierarchy);
+            output += readDirection(makeDirBox(currentBox, Dir::neu), queryBox, depthBegin, depthEnd, count, view, hierarchy);
+        }
+        else
+        {
+            BOX3D currentBounds;
+            currentBounds.minx = currentBox.min().x; currentBounds.maxx = currentBox.max().x;
+            currentBounds.miny = currentBox.min().y; currentBounds.maxy = currentBox.max().y;
+            currentBounds.minz = currentBox.min().z; currentBounds.maxz = currentBox.max().z;
+            output += this->readLevel(view, count, currentBounds, depthBegin, depthEnd);
+        }
+
     }
+
     return output;
 
 };
@@ -357,74 +372,58 @@ point_count_t GreyhoundReader::read(
         PointViewPtr view,
         const point_count_t count)
 {
+    point_count_t output(0);
     using namespace pdal::greyhound;
 
+    // if the base depth is greater than
+    // what the user gave use, we use that
+    // if it isn't, we use base depth + 1 (base depth has 0 points)
+//     uint32_t depthBegin(m_baseDepth);
+//     if (m_depthBegin > m_baseDepth)
+//         depthBegin = m_depthBegin + 1;
+//     else
+//         depthBegin++;
+//
+//     uint32_t depthEnd = depthBegin + 1;
+//
+
     uint32_t depthBegin = std::max(m_depthBegin, m_baseDepth);
-    uint32_t depthEnd = depthBegin + 1;
+    uint32_t depthEnd = depthBegin + 3;
+
+
 
     int split(0);
 
     BOX3D fullBounds = getBounds(m_resourceInfo, "bounds");
     BOX3D currentBounds = zoom(m_queryBounds, fullBounds, split);
+    log()->get(LogLevel::Info) << "fullBounds: " << fullBounds<< std::endl;
+    log()->get(LogLevel::Info) << "m_queryBounds: " << m_queryBounds<< std::endl;
+    log()->get(LogLevel::Info) << "currentBounds: " << currentBounds << std::endl;
+    Json::Value hierarchy = fetchHierarchy(currentBounds, depthBegin, depthEnd);
+
+    log()->get(LogLevel::Info) << "hierarchy: " << hierarchy << std::endl;
+    point_count_t belowUs = sumHierarchy(hierarchy);
+    log()->get(LogLevel::Info) << "belowUs: " << belowUs << std::endl;
+    log()->get(LogLevel::Info) << "split: " << split << std::endl;
+    if (!belowUs)
+        return output;
 
     BBox queryBox = makeBox(m_queryBounds);
+    BBox currentBox = makeBox(currentBounds);
 
-    point_count_t output(0);
-
-    log()->get(LogLevel::Info) << "starting  depthBegin: " << depthBegin << " depthEnd: " << depthEnd << std::endl;
-    log()->get(LogLevel::Info) << "starting  m_depthBegin: " << m_depthBegin << " m_depthEnd: " << m_depthEnd << std::endl;
-
-
-    bool doSplit(false);
-
-    while (depthBegin < m_stopSplittingDepth && depthEnd <= m_depthEnd)
+    while (depthBegin <= m_stopSplittingDepth && depthEnd <= m_depthEnd)
     {
 
-        BBox currentBox = makeBox(currentBounds);
-        BBox queryBox = makeBox(this->m_queryBounds);
-
-        Json::Value response = fetchHierarchy(currentBounds, depthBegin, depthEnd);
-        point_count_t estimatedCount = sumHierarchy(response);
-        if (!estimatedCount)
-
-        {
-            depthBegin++;
-            depthEnd = depthBegin + 1;
-            continue;
-        }
-        bool doSplit(false);
-        if (estimatedCount > m_splitCountThreshold)
-        {
-            doSplit = true;
-            log()->get(LogLevel::Info) << "doSplit is true!" << std::endl;
-        }
-
-        log()->get(LogLevel::Info)  << "doSplit: "
-                                    << doSplit
-                                    << " estimatedCount : " << estimatedCount
-                                    << " m_splitCountThreshold: " << m_splitCountThreshold
-                                    << std::endl;
-
-        output += readDirection(currentBox, queryBox, Dir::swd, depthBegin, depthEnd, count, view, doSplit);
-        output += readDirection(currentBox, queryBox, Dir::sed, depthBegin, depthEnd, count, view, doSplit);
-        output += readDirection(currentBox, queryBox, Dir::nwd, depthBegin, depthEnd, count, view, doSplit);
-        output += readDirection(currentBox, queryBox, Dir::ned, depthBegin, depthEnd, count, view, doSplit);
-        output += readDirection(currentBox, queryBox, Dir::swu, depthBegin, depthEnd, count, view, doSplit);
-        output += readDirection(currentBox, queryBox, Dir::seu, depthBegin, depthEnd, count, view, doSplit);
-        output += readDirection(currentBox, queryBox, Dir::nwu, depthBegin, depthEnd, count, view, doSplit);
-        output += readDirection(currentBox, queryBox, Dir::neu, depthBegin, depthEnd, count, view, doSplit);
-
+        output += readDirection(currentBox, queryBox, depthBegin, depthEnd, count, view, hierarchy);
         depthBegin++;
         depthEnd = depthBegin + 1;
     }
 
     // read final depth
-
     if (depthEnd > m_stopSplittingDepth)
     {
         output += readLevel(view, count, currentBounds, m_stopSplittingDepth, m_depthEnd);
         log()->get(LogLevel::Info) << "stop splitting: " << m_stopSplittingDepth << " depthEnd: " << depthEnd << std::endl;
-
     }
     return output;
 
@@ -454,8 +453,8 @@ point_count_t GreyhoundReader::readLevel(
     log()->get(LogLevel::Info) << "fetching read URL " << url.str() << std::endl;
 
     Json::Value config;
-//     if (log()->getLevel() > LogLevel::Warning)
-//         config["arbiter"]["verbose"] = true;
+    if (log()->getLevel() > LogLevel::Debug4)
+        config["arbiter"]["verbose"] = true;
     config["http"]["timeout"] = m_timeout;
     arbiter::Arbiter a(config);
     auto response = a.getBinary(url.str());

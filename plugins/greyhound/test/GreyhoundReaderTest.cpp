@@ -45,7 +45,7 @@ using namespace pdal;
 
 namespace { // anonymous
 
-std::string ROOT_URL("http://test.greyhound.io");
+std::string ROOT_URL("http://data.greyhound.io");
 
 Options getGreyhoundOptions()
 {
@@ -60,7 +60,7 @@ Options getGreyhoundOptions()
     options.add(Option("depth_end", 9));
     options.add(Option("timeout", 50000));
     options.add(Option("debug", true));
-    options.add(Option("verbose", 1));
+    options.add(Option("verbose", 8));
 
     return options;
 }
