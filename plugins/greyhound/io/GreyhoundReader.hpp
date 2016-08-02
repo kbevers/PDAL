@@ -69,6 +69,8 @@ private:
     uint32_t m_depthEnd;
     uint32_t m_baseDepth;
     uint32_t m_stopSplittingDepth;
+    uint32_t m_split;
+    uint32_t m_retryCount;
     Json::Value m_resourceInfo;
     uint32_t m_timeout;
     point_count_t m_splitCountThreshold;

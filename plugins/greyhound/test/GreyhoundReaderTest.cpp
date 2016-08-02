@@ -57,7 +57,7 @@ Options getGreyhoundOptions()
     options.add(Option("bounds", "([638404.60,638895.46],[852818.85,853379.15], [-1,1000])"));
     options.add(Option("resource", "autzen-h"));
     options.add(Option("depth_begin", 1));
-    options.add(Option("depth_end", 9));
+    options.add(Option("depth_end", 20));
     options.add(Option("timeout", 50000));
     options.add(Option("debug", true));
     options.add(Option("verbose", 8));
@@ -112,7 +112,7 @@ TEST_F(GreyhoundReaderTest, read)
     PointViewSet viewSet = reader.execute(table);
     PointViewPtr view = *viewSet.begin();
     EXPECT_EQ(view->size(), 13874u);
-
+//
     int position (10);
     EXPECT_DOUBLE_EQ(view->getFieldAs<double>(pdal::Dimension::Id::X, position), 637472.70000000007);
 
@@ -129,7 +129,7 @@ TEST_F(GreyhoundReaderTest, quick)
 
     reader.setOptions(getGreyhoundOptions());
     pdal::QuickInfo qi = reader.preview();
-    EXPECT_EQ(qi.m_pointCount, 2969019u);
+    EXPECT_EQ(qi.m_pointCount, 5183374u);
 
     BOX3D bounds = qi.m_bounds;
     EXPECT_DOUBLE_EQ(bounds.minx, 635577.79000000004);

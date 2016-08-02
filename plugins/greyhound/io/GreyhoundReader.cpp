@@ -61,6 +61,8 @@ GreyhoundReader::GreyhoundReader()
     , m_depthEnd(std::numeric_limits<uint32_t>::max())
     , m_baseDepth(0)
     , m_stopSplittingDepth(0)
+    , m_split(0)
+    , m_retryCount(1)
     , m_timeout(0)
     , m_splitCountThreshold(0)
 { }
@@ -184,9 +186,12 @@ BOX3D zoom(BOX3D query, BOX3D fullBox, int& split)
     pdal::greyhound::BBox queryBox = makeBox(query);
     pdal::greyhound::BBox currentBox = makeBox(fullBox);
 
+    std::cout << "split: " << split << " current: " << currentBox << std::endl;
+    std::cout << "query: " << queryBox << std::endl;
     while (currentBox.contains(queryBox))
     {
         currentBox.go(pdal::greyhound::getDirection(queryBox.mid(), currentBox.mid()));
+        std::cout << "split: " << split << " current: " << currentBox << std::endl;
         split++;
     }
 
@@ -198,7 +203,7 @@ BOX3D zoom(BOX3D query, BOX3D fullBox, int& split)
     return output;
 }
 
-uint64_t sumHierarchy(Json::Value tree)
+uint64_t sumHierarchy(const Json::Value& tree)
 {
     uint64_t output(0);
     if (!tree.isMember("n")) return output;
@@ -220,6 +225,10 @@ uint64_t sumHierarchy(Json::Value tree)
     output += summarize("neu");
     output += summarize("swu");
     output += summarize("seu");
+    output += summarize("nwd");
+    output += summarize("ned");
+    output += summarize("swd");
+    output += summarize("sed");
 
     return output;
 }
@@ -244,9 +253,10 @@ QuickInfo GreyhoundReader::inspect()
 
     BOX3D fullBounds = getBounds(m_resourceInfo, "bounds");
     BOX3D currentBounds = zoom(m_queryBounds, fullBounds, split);
+    m_split = split;
 
-    uint32_t depthBegin = m_baseDepth + split;
-    uint32_t depthEnd = m_baseDepth + split + 6 ;
+    uint32_t depthBegin = std::max(m_depthBegin, m_baseDepth + 1 + m_split);
+    uint32_t depthEnd = 28;
 
     Json::Value response = fetchHierarchy(currentBounds, depthBegin, depthEnd);
     uint64_t count = sumHierarchy(response);
@@ -263,11 +273,12 @@ void GreyhoundReader::addArgs(ProgramArgs& args)
 {
     args.add("url", "URL", m_url);
     args.add("resource", "Resource ID", m_resource);
-    args.add("timeout", "Request timeout (milliseconds)", m_timeout, 600u);
+    args.add("timeout", "Request timeout (milliseconds)", m_timeout, 60000u);
     args.add("bounds", "Bounding cube", m_queryBounds);
     args.add("depth_begin", "Beginning depth to query", m_depthBegin);
     args.add("depth_end", "Ending depth to query", m_depthEnd);
-    args.add("split_threshold", "Point count for which to start splitting queries", m_splitCountThreshold, 500000llu);
+    args.add("retries", "How many times to retry", m_retryCount, 1u);
+    args.add("split_threshold", "Point count for which to start splitting queries", m_splitCountThreshold, 50000llu);
 }
 
 
@@ -334,14 +345,21 @@ point_count_t GreyhoundReader::readDirection(const greyhound::BBox& currentBox,
         return dirBox;
     };
 
-    point_count_t belowUs = sumHierarchy(hierarchy);
-
+    if (depthEnd == m_stopSplittingDepth)
+        depthEnd = m_depthEnd;
 
     if (currentBox.overlaps(queryBox))
     {
-        if (belowUs  > m_splitCountThreshold)
+        BOX3D currentBounds;
+        currentBounds.minx = currentBox.min().x; currentBounds.maxx = currentBox.max().x;
+        currentBounds.miny = currentBox.min().y; currentBounds.maxy = currentBox.max().y;
+        currentBounds.minz = currentBox.min().z; currentBounds.maxz = currentBox.max().z;
+
+        Json::Value hierarchy = fetchHierarchy(currentBounds, depthBegin, depthEnd);
+        point_count_t belowUs = sumHierarchy(hierarchy);
+        log()->get(LogLevel::Info) << "belowUs: " << belowUs << " m_splitCountThreshold: " << m_splitCountThreshold << std::endl;
+        if (belowUs  > m_splitCountThreshold )
         {
-            log()->get(LogLevel::Info) << "belowUs: " << belowUs << " m_splitCountThreshold: " << m_splitCountThreshold << std::endl;
             output += readDirection(makeDirBox(currentBox, Dir::swd), queryBox, depthBegin, depthEnd, count, view, hierarchy);
             output += readDirection(makeDirBox(currentBox, Dir::sed), queryBox, depthBegin, depthEnd, count, view, hierarchy);
             output += readDirection(makeDirBox(currentBox, Dir::nwd), queryBox, depthBegin, depthEnd, count, view, hierarchy);
@@ -353,11 +371,8 @@ point_count_t GreyhoundReader::readDirection(const greyhound::BBox& currentBox,
         }
         else
         {
-            BOX3D currentBounds;
-            currentBounds.minx = currentBox.min().x; currentBounds.maxx = currentBox.max().x;
-            currentBounds.miny = currentBox.min().y; currentBounds.maxy = currentBox.max().y;
-            currentBounds.minz = currentBox.min().z; currentBounds.maxz = currentBox.max().z;
-            output += this->readLevel(view, count, currentBounds, depthBegin, depthEnd);
+            if (belowUs)
+                output += this->readLevel(view, count, currentBounds, depthBegin, depthEnd);
         }
 
     }
@@ -378,30 +393,31 @@ point_count_t GreyhoundReader::read(
     // if the base depth is greater than
     // what the user gave use, we use that
     // if it isn't, we use base depth + 1 (base depth has 0 points)
-//     uint32_t depthBegin(m_baseDepth);
-//     if (m_depthBegin > m_baseDepth)
-//         depthBegin = m_depthBegin + 1;
-//     else
-//         depthBegin++;
 //
-//     uint32_t depthEnd = depthBegin + 1;
-//
-
-    uint32_t depthBegin = std::max(m_depthBegin, m_baseDepth);
-    uint32_t depthEnd = depthBegin + 3;
-
 
 
     int split(0);
 
     BOX3D fullBounds = getBounds(m_resourceInfo, "bounds");
+    std::cout << m_resourceInfo << std::endl;
     BOX3D currentBounds = zoom(m_queryBounds, fullBounds, split);
+    m_split = split;
+
+    uint32_t depthBegin = std::max(m_depthBegin, m_baseDepth + 1 + m_split);
+    uint32_t depthEnd = depthBegin + 1;
+
     log()->get(LogLevel::Info) << "fullBounds: " << fullBounds<< std::endl;
+    log()->get(LogLevel::Info) << "split: " << split << std::endl;
     log()->get(LogLevel::Info) << "m_queryBounds: " << m_queryBounds<< std::endl;
     log()->get(LogLevel::Info) << "currentBounds: " << currentBounds << std::endl;
+    log()->get(LogLevel::Info) << "m_depthBegin: " << m_depthBegin << std::endl;
+    log()->get(LogLevel::Info) << "m_stopSplittingDepth: " << m_stopSplittingDepth << std::endl;
+    log()->get(LogLevel::Info) << "m_depthEnd: " << m_depthEnd << std::endl;
+    log()->get(LogLevel::Info) << "depthBegin: " << depthBegin << std::endl;
+    log()->get(LogLevel::Info) << "depthEnd: " << depthEnd << std::endl;
     Json::Value hierarchy = fetchHierarchy(currentBounds, depthBegin, depthEnd);
 
-    log()->get(LogLevel::Info) << "hierarchy: " << hierarchy << std::endl;
+//     log()->get(LogLevel::Info) << "hierarchy: " << hierarchy << std::endl;
     point_count_t belowUs = sumHierarchy(hierarchy);
     log()->get(LogLevel::Info) << "belowUs: " << belowUs << std::endl;
     log()->get(LogLevel::Info) << "split: " << split << std::endl;
@@ -411,7 +427,7 @@ point_count_t GreyhoundReader::read(
     BBox queryBox = makeBox(m_queryBounds);
     BBox currentBox = makeBox(currentBounds);
 
-    while (depthBegin <= m_stopSplittingDepth && depthEnd <= m_depthEnd)
+    while (depthEnd <= m_depthEnd)
     {
 
         output += readDirection(currentBox, queryBox, depthBegin, depthEnd, count, view, hierarchy);
@@ -419,12 +435,12 @@ point_count_t GreyhoundReader::read(
         depthEnd = depthBegin + 1;
     }
 
-    // read final depth
-    if (depthEnd > m_stopSplittingDepth)
-    {
-        output += readLevel(view, count, currentBounds, m_stopSplittingDepth, m_depthEnd);
-        log()->get(LogLevel::Info) << "stop splitting: " << m_stopSplittingDepth << " depthEnd: " << depthEnd << std::endl;
-    }
+//     // read final depth
+//     if (depthEnd > m_stopSplittingDepth)
+//     {
+//         output += readLevel(view, count, currentBounds, m_stopSplittingDepth, m_depthEnd);
+//         log()->get(LogLevel::Info) << "stop splitting: " << m_stopSplittingDepth << " depthEnd: " << depthEnd << std::endl;
+//     }
     return output;
 
 }
@@ -455,9 +471,25 @@ point_count_t GreyhoundReader::readLevel(
     Json::Value config;
     if (log()->getLevel() > LogLevel::Debug4)
         config["arbiter"]["verbose"] = true;
-    config["http"]["timeout"] = m_timeout;
+    config["http"]["timeout"] = 20000;
     arbiter::Arbiter a(config);
-    auto response = a.getBinary(url.str());
+    uint32_t retries(0);
+    std::vector<char> response;
+    for (uint32_t i = 0; i <= m_retryCount; ++i)
+    {
+        log()->get(LogLevel::Info) << "retry number" << i <<  std::endl;
+        try
+        {
+            response = a.getBinary(url.str());
+            log()->get(LogLevel::Info) << "Fetched data" << std::endl;
+
+            break;
+        } catch (arbiter::ArbiterError&)
+        {
+            log()->get(LogLevel::Info) << "Continued" << std::endl;
+            continue;
+        }
+    }
 
     PointId nextId = view->size();
     point_count_t numRead = 0;
@@ -466,6 +498,10 @@ point_count_t GreyhoundReader::readLevel(
                                << response.size()
                                << " bytes from "
                                << m_url << std::endl;
+    if (!response.size())
+    {
+        return numRead;
+    }
 
     const uint32_t numPoints = *reinterpret_cast<const uint32_t*>(response.data() + response.size() - sizeof(uint32_t));
 
@@ -485,15 +521,29 @@ point_count_t GreyhoundReader::readLevel(
         point_count_t numWritten =
             decompressor.decompress(outbuf, ptBuf.size());
 
+        double x(0.0); double y(0.0); double z(0.0);
+
         for (auto di = m_dimData.begin(); di != m_dimData.end(); ++di)
         {
             view->setField(di->m_id, di->m_type, nextId, outbuf);
             outbuf += Dimension::size(di->m_type);
         }
+
+        x = view->getFieldAs<double>(Dimension::Id::X, nextId);
+        y = view->getFieldAs<double>(Dimension::Id::Y, nextId);
+        z = view->getFieldAs<double>(Dimension::Id::Z, nextId);
+
+        if (m_queryBounds.contains(x,y, z))
+        {
+            // overwrite this point id if we were not inside
+            // the box
+            nextId++;
+        }
+
+        numRead++;
+
         if (m_cb)
             m_cb(*view, nextId);
-        nextId++;
-        numRead++;
     }
 #else
 
