@@ -98,7 +98,7 @@ private:
                                             uint32_t& depthEnd,
                                             point_count_t count,
                                             PointViewPtr view,
-                                            Json::Value hierarchy);
+                                            const Json::Value& hierarchy);
     DimTypeList m_dimData;
 };
 

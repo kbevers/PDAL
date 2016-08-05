@@ -129,7 +129,7 @@ BOX3D GreyhoundReader::getBounds(const Json::Value& jsondata, const std::string&
 Json::Value GreyhoundReader::fetch(const std::string& url) const
 {
     Json::Value config;
-    if (log()->getLevel() > LogLevel::Warning)
+    if (log()->getLevel() > LogLevel::Debug4)
         config["arbiter"]["verbose"] = true;
     config["http"]["timeout"] = m_timeout;
     arbiter::Arbiter a(config);
@@ -330,7 +330,7 @@ point_count_t GreyhoundReader::readDirection(const greyhound::BBox& currentBox,
                                             uint32_t& depthEnd,
                                             point_count_t count,
                                             PointViewPtr view,
-                                            Json::Value hierarchy)
+                                            const Json::Value& hierarchy)
 {
 
     point_count_t output(0);
@@ -345,8 +345,7 @@ point_count_t GreyhoundReader::readDirection(const greyhound::BBox& currentBox,
         return dirBox;
     };
 
-    if (depthEnd == m_stopSplittingDepth)
-        depthEnd = m_depthEnd;
+
 
     if (currentBox.overlaps(queryBox))
     {
@@ -357,17 +356,33 @@ point_count_t GreyhoundReader::readDirection(const greyhound::BBox& currentBox,
 
         Json::Value hierarchy = fetchHierarchy(currentBounds, depthBegin, depthEnd);
         point_count_t belowUs = sumHierarchy(hierarchy);
+        point_count_t currentLevel(0);
+        if (hierarchy.isMember("n"))
+            currentLevel = hierarchy["n"].asUInt64();
+
         log()->get(LogLevel::Info) << "belowUs: " << belowUs << " m_splitCountThreshold: " << m_splitCountThreshold << std::endl;
+        log()->get(LogLevel::Info) << "currentLevel: " << currentLevel << std::endl;
         if (belowUs  > m_splitCountThreshold )
         {
-            output += readDirection(makeDirBox(currentBox, Dir::swd), queryBox, depthBegin, depthEnd, count, view, hierarchy);
-            output += readDirection(makeDirBox(currentBox, Dir::sed), queryBox, depthBegin, depthEnd, count, view, hierarchy);
-            output += readDirection(makeDirBox(currentBox, Dir::nwd), queryBox, depthBegin, depthEnd, count, view, hierarchy);
-            output += readDirection(makeDirBox(currentBox, Dir::ned), queryBox, depthBegin, depthEnd, count, view, hierarchy);
-            output += readDirection(makeDirBox(currentBox, Dir::swu), queryBox, depthBegin, depthEnd, count, view, hierarchy);
-            output += readDirection(makeDirBox(currentBox, Dir::seu), queryBox, depthBegin, depthEnd, count, view, hierarchy);
-            output += readDirection(makeDirBox(currentBox, Dir::nwu), queryBox, depthBegin, depthEnd, count, view, hierarchy);
-            output += readDirection(makeDirBox(currentBox, Dir::neu), queryBox, depthBegin, depthEnd, count, view, hierarchy);
+            Json::Value hierarchy = fetchHierarchy(currentBounds, depthBegin, depthEnd);
+            point_count_t belowUs = sumHierarchy(hierarchy);
+            log()->get(LogLevel::Info) << "belowUsSplit: " << belowUs << std::endl;
+            if (hierarchy.isMember("swd"))
+                output += readDirection(makeDirBox(currentBox, Dir::swd), queryBox, depthBegin, depthEnd, count, view, hierarchy["swd"]);
+            if (hierarchy.isMember("sed"))
+                output += readDirection(makeDirBox(currentBox, Dir::sed), queryBox, depthBegin, depthEnd, count, view, hierarchy["sed"]);
+            if (hierarchy.isMember("nwd"))
+                output += readDirection(makeDirBox(currentBox, Dir::nwd), queryBox, depthBegin, depthEnd, count, view, hierarchy["nwd"]);
+            if (hierarchy.isMember("ned"))
+                output += readDirection(makeDirBox(currentBox, Dir::ned), queryBox, depthBegin, depthEnd, count, view, hierarchy["ned"]);
+            if (hierarchy.isMember("swu"))
+                output += readDirection(makeDirBox(currentBox, Dir::swu), queryBox, depthBegin, depthEnd, count, view, hierarchy["swu"]);
+            if (hierarchy.isMember("seu"))
+                output += readDirection(makeDirBox(currentBox, Dir::seu), queryBox, depthBegin, depthEnd, count, view, hierarchy["seu"]);
+            if (hierarchy.isMember("nwu"))
+                output += readDirection(makeDirBox(currentBox, Dir::nwu), queryBox, depthBegin, depthEnd, count, view, hierarchy["nwu"]);
+            if (hierarchy.isMember("neu"))
+                output += readDirection(makeDirBox(currentBox, Dir::neu), queryBox, depthBegin, depthEnd, count, view, hierarchy["neu"]);
         }
         else
         {
@@ -430,6 +445,10 @@ point_count_t GreyhoundReader::read(
     while (depthEnd <= m_depthEnd)
     {
 
+        if (depthEnd >= m_stopSplittingDepth)
+        {
+            depthEnd = m_depthEnd;
+        }
         output += readDirection(currentBox, queryBox, depthBegin, depthEnd, count, view, hierarchy);
         depthBegin++;
         depthEnd = depthBegin + 1;
