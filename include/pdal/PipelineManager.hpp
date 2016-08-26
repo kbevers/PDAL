@@ -72,13 +72,23 @@ public:
 
     // These add stages, hook dependencies and set necessary options.
     // They're preferable to the above as they're more flexible and safer.
-    Stage& makeReader(const std::string& inputFile);
     Stage& makeReader(const std::string& inputFile, std::string driver);
+    Stage& makeReader(const std::string& inputFile, std::string driver,
+        Options options);
+
     Stage& makeFilter(const std::string& driver);
+    Stage& makeFilter(const std::string& driver, Options options);
     Stage& makeFilter(const std::string& driver, Stage& parent);
+    Stage& makeFilter(const std::string& driver, Stage& parent,
+        Options options);
+
     Stage& makeWriter(const std::string& outputFile, std::string driver);
     Stage& makeWriter(const std::string& outputFile, std::string driver,
+        Options options);
+    Stage& makeWriter(const std::string& outputFile, std::string driver,
         Stage& parent);
+    Stage& makeWriter(const std::string& outputFile, std::string driver,
+        Stage& parent, Options options);
 
     // returns true if the pipeline endpoint is a writer
     bool isWriterPipeline() const
@@ -88,6 +98,10 @@ public:
     // pipeline)
     Stage* getStage() const
         { return m_stages.empty() ? nullptr : m_stages.back(); }
+
+    // Set the log to be available to stages.
+    void setLog(LogPtr& log)
+        { m_log = log; }
 
     QuickInfo preview() const;
     void prepare() const;
@@ -121,6 +135,7 @@ private:
     std::vector<Stage*> m_stages; // stage observer, never owner
     int m_progressFd;
     std::istream *m_input;
+    LogPtr m_log;
 
     PipelineManager& operator=(const PipelineManager&); // not implemented
     PipelineManager(const PipelineManager&); // not implemented

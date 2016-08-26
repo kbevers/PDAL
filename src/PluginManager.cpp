@@ -87,12 +87,12 @@ StringList pluginSearchPaths()
     Utils::getenv("PDAL_DRIVER_PATH", envOverride);
 
     if (!envOverride.empty())
-        searchPaths.push_back(envOverride);
+        searchPaths = Utils::split2(envOverride, ':');
     else
     {
         searchPaths.push_back(PDAL_PLUGIN_INSTALL_PATH);
-        StringList standardPaths = { "/usr/local/lib", "./lib",
-            "../lib", "../bin" };
+        StringList standardPaths = { "./lib", "../lib", "../bin",
+            PDAL_PLUGIN_INSTALL_PATH };
         for (std::string& s : standardPaths)
         {
             if (FileUtils::toAbsolutePath(s) !=
@@ -141,9 +141,22 @@ void PluginManager::l_loadAll(PF_PluginType type)
         loadAll(pluginPath, type);
 }
 
+
+StringList PluginManager::test_pluginSearchPaths()
+{
+    return pluginSearchPaths();
+}
+
+
 StringList PluginManager::names(int typeMask)
 {
     return s_instance.l_names(typeMask);
+}
+
+
+void PluginManager::setLog(LogPtr& log)
+{
+    s_instance.m_log = log;
 }
 
 
@@ -202,7 +215,7 @@ void PluginManager::loadAll(const std::string& pluginDirectory, int type)
 
     if (pluginDirectoryValid)
     {
-        m_log.get(LogLevel::Debug) << "Loading plugins from directory " <<
+        m_log->get(LogLevel::Debug) << "Loading plugins from directory " <<
             pluginDirectory << std::endl;
         StringList files = FileUtils::directoryList(pluginDirectory);
         for (auto file : files)
@@ -233,7 +246,7 @@ bool PluginManager::l_initializePlugin(PF_InitFunc initFunc)
 }
 
 
-PluginManager::PluginManager() : m_log("PDAL", "stderr")
+PluginManager::PluginManager() : m_log(new Log("PDAL", &std::clog))
 {
     m_version.major = 1;
     m_version.minor = 0;
@@ -243,7 +256,7 @@ PluginManager::PluginManager() : m_log("PDAL", "stderr")
 PluginManager::~PluginManager()
 {
     if (!shutdown())
-        m_log.get(LogLevel::Error) <<
+        m_log->get(LogLevel::Error) <<
             "Error destroying PluginManager" << std::endl;
 }
 
@@ -337,7 +350,7 @@ bool PluginManager::guessLoadByPath(const std::string& driverName)
 
     for (const auto& pluginPath : pluginSearchPaths())
     {
-        m_log.get(LogLevel::Debug) <<
+        m_log->get(LogLevel::Debug) <<
            "Plugin search path: '" << pluginPath << "'" << std::endl;
         if (!FileUtils::fileExists(pluginPath) ||
             !FileUtils::isDirectory(pluginPath))
@@ -398,22 +411,22 @@ bool PluginManager::loadByPath(const std::string& pluginPath, int type)
         std::string errorString;
         auto completePath(FileUtils::toAbsolutePath(pluginPath));
 
-        m_log.get(LogLevel::Debug) << "Attempting to load plugin '" <<
+        m_log->get(LogLevel::Debug) << "Attempting to load plugin '" <<
             completePath << "'." << std::endl;
 
         if (DynamicLibrary *d = loadLibrary(completePath, errorString))
         {
-            m_log.get(LogLevel::Debug) << "Loaded plugin '" << completePath <<
+            m_log->get(LogLevel::Debug) << "Loaded plugin '" << completePath <<
                 "'." << std::endl;
             if (PF_InitFunc initFunc =
                     (PF_InitFunc)(d->getSymbol("PF_initPlugin")))
             {
                 loaded = initializePlugin(initFunc);
-                m_log.get(LogLevel::Debug) << "Initialized plugin '" <<
+                m_log->get(LogLevel::Debug) << "Initialized plugin '" <<
                     completePath << "'." << std::endl;
             }
             else
-                m_log.get(LogLevel::Error) <<
+                m_log->get(LogLevel::Error) <<
                     "Failed to initialize plugin function for plugin '" <<
                     completePath << "'." << std::endl;
         }
@@ -465,7 +478,7 @@ DynamicLibrary *PluginManager::loadLibrary(const std::string& path,
     }
     else
     {
-        m_log.get(LogLevel::Error) << "Can't load library " << path <<
+        m_log->get(LogLevel::Error) << "Can't load library " << path <<
             ": " << errorString;
     }
 

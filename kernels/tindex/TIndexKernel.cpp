@@ -86,9 +86,7 @@ TIndexKernel::TIndexKernel()
     , m_layer(NULL)
     , m_fastBoundary(false)
 
-{
-    m_log.setLeader("pdal tindex");
-}
+{}
 
 
 void TIndexKernel::addSwitches(ProgramArgs& args)
@@ -103,7 +101,7 @@ void TIndexKernel::addSwitches(ProgramArgs& args)
         m_layerName);
     args.add("tindex_name", "Tile index column name", m_tileIndexColumnName,
         "location");
-    args.add("driver,f", "OGR driver name to use ", m_driverName,
+    args.add("ogrdriver,f", "OGR driver name to use ", m_driverName,
         "ESRI Shapefile");
     args.add("t_srs", "Target SRS of tile index", m_tgtSrsString,
         "EPSG:4326");
@@ -115,6 +113,8 @@ void TIndexKernel::addSwitches(ProgramArgs& args)
         "Write absolute rather than relative file paths", m_absPath);
     args.add("merge", "Whether we're merging the entries in a tindex file.",
         m_merge);
+    args.add("stdin,s", "Read filespec pattern from standard input",
+        m_usestdin);
 }
 
 
@@ -289,9 +289,9 @@ void TIndexKernel::createFile()
         if (!isFileIndexed(indexes, info))
         {
             if (createFeature(indexes, info))
-                m_log.get(LogLevel::Info) << "Indexed file " << f << std::endl;
+                m_log->get(LogLevel::Info) << "Indexed file " << f << std::endl;
             else
-                m_log.get(LogLevel::Error) << "Failed to create feature for "
+                m_log->get(LogLevel::Error) << "Failed to create feature for "
                     "file '" << f << "'" << std::endl;
 
         }
@@ -370,11 +370,11 @@ void TIndexKernel::mergeFile()
 
         if (m_tgtSrsString != f.m_srs)
         {
-            Stage& repro = makeFilter("filters.reprojection", reader);
             Options reproOptions;
             reproOptions.add("out_srs", m_tgtSrsString);
             reproOptions.add("in_srs", f.m_srs);
-            repro.addOptions(reproOptions);
+            Stage& repro = makeFilter("filters.reprojection", reader,
+                reproOptions);
             premerge = &repro;
         }
 
@@ -382,20 +382,17 @@ void TIndexKernel::mergeFile()
         // can be used as a test here.
         if (!m_wkt.empty())
         {
-            Stage& crop = makeFilter("filters.crop", *premerge);
-            crop.addOptions(cropOptions);
+            Stage& crop = makeFilter("filters.crop", *premerge, cropOptions);
             premerge = &crop;
         }
         merge.setInput(*premerge);
     }
 
-    Stage& writer = makeWriter(m_filespec, merge, "");
-
     Options writerOptions;
     writerOptions.add("offset_x", "auto");
     writerOptions.add("offset_y", "auto");
     writerOptions.add("offset_z", "auto");
-    writer.addConditionalOptions(writerOptions);
+    Stage& writer = makeWriter(m_filespec, merge, "", writerOptions);
 
     PointTable table;
     writer.prepare(table);
@@ -462,7 +459,7 @@ bool TIndexKernel::createFeature(const FieldIndexes& indexes,
         {}
         if (err != OGRERR_NONE)
         {
-            m_log.get(LogLevel::Warning) << "Unable to convert SRS to "
+            m_log->get(LogLevel::Warning) << "Unable to convert SRS to "
                 "proj.4 format for file '" << fileInfo.m_filename << "'" <<
                 std::endl;
             return false;
@@ -579,7 +576,7 @@ bool TIndexKernel::createLayer(std::string const& layername)
 
     SpatialRef srs(m_tgtSrsString);
     if (!srs)
-        m_log.get(LogLevel::Error) << "Unable to import srs for layer "
+        m_log->get(LogLevel::Error) << "Unable to import srs for layer "
            "creation" << std::endl;
 
     m_layer = OGR_DS_CreateLayer(m_dataset, m_layerName.c_str(),

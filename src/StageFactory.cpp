@@ -49,6 +49,7 @@
 #include <ferry/FerryFilter.hpp>
 #include <hag/HAGFilter.hpp>
 #include <merge/MergeFilter.hpp>
+#include <mongus/MongusFilter.hpp>
 #include <mortonorder/MortonOrderFilter.hpp>
 #include <normal/NormalFilter.hpp>
 #include <outlier/OutlierFilter.hpp>
@@ -56,6 +57,7 @@
 #include <range/RangeFilter.hpp>
 #include <reprojection/ReprojectionFilter.hpp>
 #include <sample/SampleFilter.hpp>
+#include <smrf/SMRFilter.hpp>
 #include <sort/SortFilter.hpp>
 #include <splitter/SplitterFilter.hpp>
 #include <stats/StatsFilter.hpp>
@@ -70,6 +72,7 @@
 #include <optech/OptechReader.hpp>
 #include <buffer/BufferReader.hpp>
 #include <ply/PlyReader.hpp>
+#include <pts/PtsReader.hpp>
 #include <qfit/QfitReader.hpp>
 #include <sbet/SbetReader.hpp>
 #include <terrasolid/TerrasolidReader.hpp>
@@ -105,6 +108,7 @@ StringList StageFactory::extensions(const std::string& driver)
         { "readers.nitf", { "nitf", "nsf", "ntf" } },
         { "readers.pcd", { "pcd" } },
         { "readers.ply", { "ply" } },
+        { "readers.pts", { "pts" } },
         { "readers.qfit", { "qi" } },
         { "readers.rxp", { "rxp" } },
         { "readers.sbet", { "sbet" } },
@@ -138,7 +142,6 @@ std::string StageFactory::inferReaderDriver(const std::string& filename)
         { "bpf", "readers.bpf" },
         { "csd", "readers.optech" },
         { "greyhound", "readers.greyhound" },
-        { "http", "readers.greyhound" },
         { "icebridge", "readers.icebridge" },
         { "las", "readers.las" },
         { "laz", "readers.las" },
@@ -147,6 +150,7 @@ std::string StageFactory::inferReaderDriver(const std::string& filename)
         { "ntf", "readers.nitf" },
         { "pcd", "readers.pcd" },
         { "ply", "readers.ply" },
+        { "pts", "readers.pts" },
         { "qi", "readers.qfit" },
         { "rxp", "readers.rxp" },
         { "sbet", "readers.sbet" },
@@ -157,10 +161,12 @@ std::string StageFactory::inferReaderDriver(const std::string& filename)
         { "h5", "readers.icebridge" }
     };
 
+    static const std::string ghPrefix("greyhound://");
+
     std::string ext;
     // filename may actually be a greyhound uri + pipelineId
-    if (Utils::iequals(filename.substr(0, 4), "http"))
-        ext = ".http";      // Make it look like an extension.
+    if (Utils::iequals(filename.substr(0, ghPrefix.size()), ghPrefix))
+        ext = ".greyhound";      // Make it look like an extension.
     else
         ext = FileUtils::extension(filename);
 
@@ -230,6 +236,7 @@ StageFactory::StageFactory(bool no_plugins)
     PluginManager::initializePlugin(FerryFilter_InitPlugin);
     PluginManager::initializePlugin(HAGFilter_InitPlugin);
     PluginManager::initializePlugin(MergeFilter_InitPlugin);
+    PluginManager::initializePlugin(MongusFilter_InitPlugin);
     PluginManager::initializePlugin(MortonOrderFilter_InitPlugin);
     PluginManager::initializePlugin(NormalFilter_InitPlugin);
     PluginManager::initializePlugin(OutlierFilter_InitPlugin);
@@ -237,6 +244,7 @@ StageFactory::StageFactory(bool no_plugins)
     PluginManager::initializePlugin(RangeFilter_InitPlugin);
     PluginManager::initializePlugin(ReprojectionFilter_InitPlugin);
     PluginManager::initializePlugin(SampleFilter_InitPlugin);
+    PluginManager::initializePlugin(SMRFilter_InitPlugin);
     PluginManager::initializePlugin(SortFilter_InitPlugin);
     PluginManager::initializePlugin(SplitterFilter_InitPlugin);
     PluginManager::initializePlugin(StatsFilter_InitPlugin);
@@ -250,6 +258,7 @@ StageFactory::StageFactory(bool no_plugins)
     PluginManager::initializePlugin(LasReader_InitPlugin);
     PluginManager::initializePlugin(OptechReader_InitPlugin);
     PluginManager::initializePlugin(PlyReader_InitPlugin);
+    PluginManager::initializePlugin(PtsReader_InitPlugin);
     PluginManager::initializePlugin(QfitReader_InitPlugin);
     PluginManager::initializePlugin(SbetReader_InitPlugin);
     PluginManager::initializePlugin(TerrasolidReader_InitPlugin);

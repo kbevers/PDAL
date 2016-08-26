@@ -120,17 +120,10 @@ bool parseOption(std::string o, std::string& stage, std::string& option,
 } // unnamed namespace
 
 
-Kernel::Kernel()
-    : m_usestdin(false)
-    , m_log("pdal", "stderr")
-    , m_isDebug(false)
-    , m_verboseLevel(0)
-    , m_showVersion(false)
-    , m_showTime(false)
+Kernel::Kernel() :
+    m_showTime(false)
     , m_hardCoreDebug(false)
-    , m_reportDebug(false)
     , m_visualize(false)
-    , m_driverOverride("")
 {}
 
 
@@ -141,21 +134,21 @@ std::ostream& operator<<(std::ostream& ostr, const Kernel& kernel)
 }
 
 
-void Kernel::doSwitches(int argc, const char *argv[], ProgramArgs& args)
+void Kernel::doSwitches(const StringList& cmdArgs, ProgramArgs& args)
 {
-    StringList stringArgs;
     OptionsMap& stageOptions = m_manager.stageOptions();
+    StringList stringArgs;
 
     // Scan the argument vector for extra stage options.  Pull them out and
     // stick them in the list.  Let the ProgramArgs handle everything else.
     // NOTE: This depends on the format being "option=value" rather than
     //   "option value".  This is what we've always expected, so no problem,
     //   but it would be better to be more flexible.
-    for (int i = 0; i < argc; ++i)
+    for (size_t i = 0; i < cmdArgs.size(); ++i)
     {
         std::string stageName, opName, value;
 
-        if (parseOption(argv[i], stageName, opName, value))
+        if (parseOption(cmdArgs[i], stageName, opName, value))
         {
             if (value.empty())
             {
@@ -169,22 +162,23 @@ void Kernel::doSwitches(int argc, const char *argv[], ProgramArgs& args)
             stageOptions[stageName].add(op);
         }
         else
-            stringArgs.push_back(argv[i]);
+            stringArgs.push_back(cmdArgs[i]);
     }
 
     try
     {
-        addBasicSwitches(args);
-
         // parseSimple allows us to scan for the help option without
         // raising exception about missing arguments and so on.
-        args.parseSimple(stringArgs);
+        // It also removes consumed args from the arg list, so for now,
+        // parse a copy that will be ignored by parse().
+        ProgramArgs hargs;
+        hargs.add("help,h", "Print help message", m_showHelp);
+        hargs.parseSimple(stringArgs);
+
+        addBasicSwitches(args);
         addSwitches(args);
         if (!m_showHelp)
-        {
-            args.reset();
             args.parse(stringArgs);
-        }
     }
     catch (arg_error& e)
     {
@@ -234,15 +228,16 @@ int Kernel::doExecution(ProgramArgs& args)
 
 
 // this just wraps ALL the code in total catch block
-int Kernel::run(int argc, char const * argv[], const std::string& appName)
+int Kernel::run(const StringList& cmdArgs, LogPtr& log)
 {
-    m_appName = appName;
+    m_log = log;
+    m_manager.setLog(m_log);
 
     ProgramArgs args;
 
     try
     {
-        doSwitches(argc, argv, args);
+        doSwitches(cmdArgs, args);
     }
     catch (const pdal_error& e)
     {
@@ -280,18 +275,6 @@ int Kernel::innerRun(ProgramArgs& args)
 
     parseCommonOptions();
     return execute();
-}
-
-
-bool Kernel::isDebug() const
-{
-    return m_isDebug;
-}
-
-
-uint32_t Kernel::getVerboseLevel() const
-{
-    return m_verboseLevel;
 }
 
 
@@ -378,17 +361,6 @@ void Kernel::parseCommonOptions()
     if (m_visualize)
         options.add("visualize", m_visualize);
 
-    if (m_isDebug)
-    {
-        options.add("debug", true);
-        uint32_t verbosity(m_verboseLevel);
-        if (!verbosity)
-            verbosity = 1;
-
-        options.add("verbose", verbosity);
-        options.add("log", "STDERR");
-    }
-
     auto pred = [](char c){ return (bool)strchr(",| ", c); };
 
     if (!m_scales.empty())
@@ -447,7 +419,7 @@ void Kernel::parseCommonOptions()
 
 void Kernel::outputHelp(ProgramArgs& args)
 {
-    std::cout << "usage: " << "pdal " << m_appName << " [options] " <<
+    std::cout << "usage: " << "pdal " << getName() << " [options] " <<
         args.commandLine() << std::endl;
 
     std::cout << "options:" << std::endl;
@@ -462,16 +434,11 @@ void Kernel::outputHelp(ProgramArgs& args)
 
 void Kernel::addBasicSwitches(ProgramArgs& args)
 {
-    args.add("help,h", "Print help message", m_showHelp);
-
-    args.add("debug,d", "Enable debug mode", m_isDebug);
     args.add("developer-debug",
         "Enable developer debug (don't trap exceptions)", m_hardCoreDebug);
     args.add("label", "A string to label the process with", m_label);
-    args.add("verbose,v", "Set verbose message level", m_verboseLevel);
 
     args.add("visualize", "Visualize result", m_visualize);
-    args.add("stdin,s", "Read pipeline JSON from stdin", m_usestdin);
     args.add("driver", "Override reader driver", m_driverOverride, "");
     args.add("scale",
          "A comma-separated or quoted, space-separated list of scales to "
@@ -499,6 +466,13 @@ Stage& Kernel::makeReader(const std::string& inputFile, std::string driver)
 }
 
 
+Stage& Kernel::makeReader(const std::string& inputFile, std::string driver,
+    Options options)
+{
+    return m_manager.makeReader(inputFile, driver, options);
+}
+
+
 Stage& Kernel::makeFilter(const std::string& driver)
 {
     return m_manager.makeFilter(driver);
@@ -511,10 +485,24 @@ Stage& Kernel::makeFilter(const std::string& driver, Stage& parent)
 }
 
 
+Stage& Kernel::makeFilter(const std::string& driver, Stage& parent,
+    Options options)
+{
+    return m_manager.makeFilter(driver, parent, options);
+}
+
+
 Stage& Kernel::makeWriter(const std::string& outputFile, Stage& parent,
     std::string driver)
 {
     return m_manager.makeWriter(outputFile, driver, parent);
+}
+
+
+Stage& Kernel::makeWriter(const std::string& outputFile, Stage& parent,
+    std::string driver, Options options)
+{
+    return m_manager.makeWriter(outputFile, driver, parent, options);
 }
 
 

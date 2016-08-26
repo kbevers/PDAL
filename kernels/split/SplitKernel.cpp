@@ -76,7 +76,7 @@ void SplitKernel::validateSwitches(ProgramArgs& args)
 #endif
 
     if (m_length && m_capacity)
-        throw pdal_error("Can't specify for length and capacity.");
+        throw pdal_error("Can't specify both length and capacity.");
     if (!m_length && !m_capacity)
         m_capacity = 100000;
     if (m_outputFile.back() == pathSeparator)
@@ -106,7 +106,6 @@ int SplitKernel::execute()
 
     Options filterOpts;
     std::string driver = (m_length ? "filters.splitter" : "filters.chipper");
-    Stage& f = makeFilter(driver, reader);
     if (m_length)
     {
         filterOpts.add("length", m_length);
@@ -117,7 +116,7 @@ int SplitKernel::execute()
     {
         filterOpts.add("capacity", m_capacity);
     }
-    f.addOptions(filterOpts);
+    Stage& f = makeFilter(driver, reader, filterOpts);
     f.prepare(table);
     PointViewSet pvSet = f.execute(table);
 

@@ -67,10 +67,8 @@ public:
     {}
 
     // call this, to start the machine
-    int run(int argc, const char* argv[], const std::string& appName);
+    int run(const StringList& cmdArgs, LogPtr& log);
 
-    bool isDebug() const;
-    uint32_t getVerboseLevel() const;
     virtual std::string getName() const = 0;
     bool isVisualize() const;
     void visualize(PointViewPtr view);
@@ -79,10 +77,16 @@ protected:
     // this is protected; your derived class ctor will be the public entry point
     Kernel();
     Stage& makeReader(const std::string& inputFile, std::string driver);
+    Stage& makeReader(const std::string& inputFile, std::string driver,
+        Options options);
     Stage& makeFilter(const std::string& driver, Stage& parent);
+    Stage& makeFilter(const std::string& driver, Stage& parent,
+        Options options);
     Stage& makeFilter(const std::string& driver);
     Stage& makeWriter(const std::string& outputFile, Stage& parent,
         std::string driver);
+    Stage& makeWriter(const std::string& outputFile, Stage& parent,
+        std::string driver, Options options);
 
 public:
     virtual void addSwitches(ProgramArgs& args)
@@ -98,8 +102,7 @@ public:
     virtual int execute() = 0;
 
 protected:
-    bool m_usestdin;
-    Log m_log;
+    LogPtr m_log;
     PipelineManager m_manager;
     std::string m_driverOverride;
 
@@ -110,22 +113,17 @@ private:
     void addBasicSwitches(ProgramArgs& args);
     void parseCommonOptions();
 
-    void doSwitches(int argc, const char *argv[], ProgramArgs& args);
+    void doSwitches(const StringList& cmdArgs, ProgramArgs& args);
     int doStartup();
     int doExecution(ProgramArgs& args);
 
     static bool test_parseOption(std::string o, std::string& stage,
         std::string& option, std::string& value);
 
-    bool m_isDebug;
-    uint32_t m_verboseLevel;
     bool m_showHelp;
     bool m_showOptions;
-    bool m_showVersion;
     bool m_showTime;
-    std::string m_appName;
     bool m_hardCoreDebug;
-    bool m_reportDebug;
     std::string m_scales;
     std::string m_offsets;
     bool m_visualize;
