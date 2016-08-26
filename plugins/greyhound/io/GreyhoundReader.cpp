@@ -186,12 +186,9 @@ BOX3D zoom(BOX3D query, BOX3D fullBox, int& split)
     pdal::greyhound::BBox queryBox = makeBox(query);
     pdal::greyhound::BBox currentBox = makeBox(fullBox);
 
-    std::cout << "split: " << split << " current: " << currentBox << std::endl;
-    std::cout << "query: " << queryBox << std::endl;
     while (currentBox.contains(queryBox))
     {
         currentBox.go(pdal::greyhound::getDirection(queryBox.mid(), currentBox.mid()));
-        std::cout << "split: " << split << " current: " << currentBox << std::endl;
         split++;
     }
 
@@ -360,13 +357,10 @@ point_count_t GreyhoundReader::readDirection(const greyhound::BBox& currentBox,
         if (hierarchy.isMember("n"))
             currentLevel = hierarchy["n"].asUInt64();
 
-        log()->get(LogLevel::Info) << "belowUs: " << belowUs << " m_splitCountThreshold: " << m_splitCountThreshold << std::endl;
-        log()->get(LogLevel::Info) << "currentLevel: " << currentLevel << std::endl;
         if (belowUs  > m_splitCountThreshold )
         {
             Json::Value hierarchy = fetchHierarchy(currentBounds, depthBegin, depthEnd);
             point_count_t belowUs = sumHierarchy(hierarchy);
-            log()->get(LogLevel::Info) << "belowUsSplit: " << belowUs << std::endl;
             if (hierarchy.isMember("swd"))
                 output += readDirection(makeDirBox(currentBox, Dir::swd), queryBox, depthBegin, depthEnd, count, view, hierarchy["swd"]);
             if (hierarchy.isMember("sed"))
@@ -414,28 +408,15 @@ point_count_t GreyhoundReader::read(
     int split(0);
 
     BOX3D fullBounds = getBounds(m_resourceInfo, "bounds");
-    std::cout << m_resourceInfo << std::endl;
     BOX3D currentBounds = zoom(m_queryBounds, fullBounds, split);
     m_split = split;
 
     uint32_t depthBegin = std::max(m_depthBegin, m_baseDepth + 1 + m_split);
     uint32_t depthEnd = depthBegin + 1;
 
-    log()->get(LogLevel::Info) << "fullBounds: " << fullBounds<< std::endl;
-    log()->get(LogLevel::Info) << "split: " << split << std::endl;
-    log()->get(LogLevel::Info) << "m_queryBounds: " << m_queryBounds<< std::endl;
-    log()->get(LogLevel::Info) << "currentBounds: " << currentBounds << std::endl;
-    log()->get(LogLevel::Info) << "m_depthBegin: " << m_depthBegin << std::endl;
-    log()->get(LogLevel::Info) << "m_stopSplittingDepth: " << m_stopSplittingDepth << std::endl;
-    log()->get(LogLevel::Info) << "m_depthEnd: " << m_depthEnd << std::endl;
-    log()->get(LogLevel::Info) << "depthBegin: " << depthBegin << std::endl;
-    log()->get(LogLevel::Info) << "depthEnd: " << depthEnd << std::endl;
     Json::Value hierarchy = fetchHierarchy(currentBounds, depthBegin, depthEnd);
 
-//     log()->get(LogLevel::Info) << "hierarchy: " << hierarchy << std::endl;
     point_count_t belowUs = sumHierarchy(hierarchy);
-    log()->get(LogLevel::Info) << "belowUs: " << belowUs << std::endl;
-    log()->get(LogLevel::Info) << "split: " << split << std::endl;
     if (!belowUs)
         return output;
 
@@ -454,12 +435,6 @@ point_count_t GreyhoundReader::read(
         depthEnd = depthBegin + 1;
     }
 
-//     // read final depth
-//     if (depthEnd > m_stopSplittingDepth)
-//     {
-//         output += readLevel(view, count, currentBounds, m_stopSplittingDepth, m_depthEnd);
-//         log()->get(LogLevel::Info) << "stop splitting: " << m_stopSplittingDepth << " depthEnd: " << depthEnd << std::endl;
-//     }
     return output;
 
 }
@@ -474,7 +449,6 @@ point_count_t GreyhoundReader::readLevel(
 
 
     std::string bounds_str = stringifyBounds(bounds);
-    log()->get(LogLevel::Info) << "bounds string: " << bounds_str << std::endl;
     std::stringstream url;
     url << m_url << "/resource/" << m_resource;
     url << "/read?bounds=" << arbiter::http::sanitize(stringifyBounds(bounds));
@@ -496,16 +470,12 @@ point_count_t GreyhoundReader::readLevel(
     std::vector<char> response;
     for (uint32_t i = 0; i <= m_retryCount; ++i)
     {
-        log()->get(LogLevel::Info) << "retry number" << i <<  std::endl;
         try
         {
             response = a.getBinary(url.str());
-            log()->get(LogLevel::Info) << "Fetched data" << std::endl;
-
             break;
         } catch (arbiter::ArbiterError&)
         {
-            log()->get(LogLevel::Info) << "Continued" << std::endl;
             continue;
         }
     }
@@ -525,8 +495,9 @@ point_count_t GreyhoundReader::readLevel(
     const uint32_t numPoints = *reinterpret_cast<const uint32_t*>(response.data() + response.size() - sizeof(uint32_t));
 
     log()->get(LogLevel::Info) << "Fetched "
-                               << numPoints
-                               << " points from "
+                               << response.size()
+                               << " bytes and "
+                               << numPoints << " points from"
                                << m_url << std::endl;
 
 #ifdef PDAL_HAVE_LAZPERF
